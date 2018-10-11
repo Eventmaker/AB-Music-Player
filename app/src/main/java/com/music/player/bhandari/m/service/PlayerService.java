@@ -1667,9 +1667,18 @@ public class PlayerService extends Service implements
         mediaPlayer.reset();
         mediaPlayer.release();
 
-        mediaPlayer2.stop();
-        mediaPlayer2.reset();
-        mediaPlayer2.release();
+        //try to release media player 2 resources
+        //even though check has been added to make sure it is initialized to be released.
+        //but I can't risk crash so enclosed in try catch
+        try {
+            if (crossFadeEnabled) {
+                mediaPlayer2.stop();
+                mediaPlayer2.reset();
+                mediaPlayer2.release();
+            }
+        }catch (Exception e){
+            Log.d(TAG, "releaseMediaPlayers: Some error while releasing things");
+        }
     }
 
     public void storeTracklist() {
