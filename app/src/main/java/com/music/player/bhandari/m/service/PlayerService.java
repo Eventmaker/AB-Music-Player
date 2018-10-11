@@ -322,7 +322,7 @@ public class PlayerService extends Service implements
             });
         }
     }
-bran
+
     private void initializeMediaPlayer2() {
         mediaPlayer2 = new MediaPlayer();
         mediaPlayer2.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
