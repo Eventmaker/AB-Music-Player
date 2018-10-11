@@ -23,7 +23,6 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.appwidget.AppWidgetManager;
 import android.bluetooth.BluetoothAdapter;
-import android.bluetooth.BluetoothDevice;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
@@ -31,9 +30,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
-import android.graphics.Color;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.hardware.SensorManager;
@@ -60,6 +57,7 @@ import android.util.Log;
 import android.widget.RemoteViews;
 import android.widget.Toast;
 
+import com.music.player.bhandari.m.BuildConfig;
 import com.music.player.bhandari.m.R;
 import com.music.player.bhandari.m.UIElementHelper.ColorHelper;
 import com.music.player.bhandari.m.activity.ActivityMain;
@@ -80,7 +78,6 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.security.spec.ECField;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -98,7 +95,11 @@ public class PlayerService extends Service implements
 
     static public final int STOPPED = -1, PAUSED = 0, PLAYING = 1;
     private AudioManager mAudioManager;
+
     private MediaPlayer mediaPlayer;
+    //new media player for crossfade
+    private MediaPlayer mediaPlayer2;
+
     private boolean playAfterPrepare = false;
 
     //playlist (now playing)
@@ -144,6 +145,9 @@ public class PlayerService extends Service implements
     //bluetooth device is disconnected.
     static Boolean doesMusicNeedsToBePaused = false;
 
+    private boolean crossFadeEnabled = false;
+    private boolean mediaPlayer1Selected = true; //which media player is being used currently
+
     @Override
     public void onCreate() {
         // MyApp.getPref().edit().putBoolean(getString(R.string.pref_remove_ads),true).apply();
@@ -173,73 +177,11 @@ public class PlayerService extends Service implements
 
         //initialize stuff  ///to broadcast to UI when track changes automatically
         mAudioManager=(AudioManager) this.getSystemService(Context.AUDIO_SERVICE);
-        mediaPlayer = new MediaPlayer();
-        mediaPlayer.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
-            @Override
-            public void onCompletion(MediaPlayer arg0) {
-                Log.d("PlayerService", "onCompletion: " + arg0);
-                if (currentTrackPosition == trackList.size()-1) {
-                    if(MyApp.getPref().getInt(Constants.PREFERENCES.REPEAT,0)==Constants.PREFERENCE_VALUES.REPEAT_ALL){
-                        playTrack(0);
-                        currentTrackPosition=0;
-                    } else if(MyApp.getPref().getInt(Constants.PREFERENCES.REPEAT,0)==Constants.PREFERENCE_VALUES.REPEAT_ONE) {
-                        playTrack(currentTrackPosition);
-                    } else {
-                        if(MyApp.getPref().getBoolean(getString(R.string.pref_continuous_playback), false)) {
-                            if (trackList.size() < 10) {
-                                List<Integer> dataItems = MusicLibrary.getInstance().getDefaultTracklistNew();
-                                Collections.shuffle(dataItems);
-                                trackList.addAll(dataItems);
-                                playTrack(currentTrackPosition + 1);
-                            } else {
-                                playTrack(0);
-                                currentTrackPosition = 0;
-                            }
-                        }else {
-                            stop();
-                        }
-                    }
-                }else if(MyApp.getPref().getInt(Constants.PREFERENCES.REPEAT,0)==Constants.PREFERENCE_VALUES.REPEAT_ONE) {
-                    playTrack(currentTrackPosition);
-                }else {
-                    nextTrack();
-                }
-                notifyUI();
-                PostNotification();
-            }
-        });
+        initializeMediaPlayer();
 
-        mediaPlayer.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
-            @Override
-            public void onPrepared(MediaPlayer mp) {
-                if(playAfterPrepare) {
-                    mediaPlayer.start();
-                }else {
-                    Log.d("PlayerService", "onPrepared: seeking to : " + MyApp.getPref().getInt(Constants.PREFERENCES.STORED_SONG_POSITION_DURATION, 0));
-                    try {
-                        mediaPlayer.seekTo(MyApp.getPref().getInt(Constants.PREFERENCES.STORED_SONG_POSITION_DURATION, 0));
-                    }catch (Exception e){
-                        Log.d("PlayerService", "onPrepared: Unable to seek track");
-                    }
-                }
-            }
-        });
-
-        mediaPlayer.setOnErrorListener(new MediaPlayer.OnErrorListener() {
-            @Override
-            public boolean onError(MediaPlayer mediaPlayer, int i, int i1) {
-                Log.d("PlayerService", "onError: " + mediaPlayer + " " + i + " " + i1);
-                return false;
-            }
-        });
-
-        mediaPlayer.setOnInfoListener(new MediaPlayer.OnInfoListener() {
-            @Override
-            public boolean onInfo(MediaPlayer mediaPlayer, int i, int i1) {
-                Log.d("PlayerService", "onInfo: " + mediaPlayer);
-                return false;
-            }
-        });
+        //@todo if crossfade enabled
+        if(crossFadeEnabled)
+            initializeMediaPlayer2();
 
         currentTrackPosition = -1;
         setStatus(STOPPED);
@@ -308,6 +250,152 @@ public class PlayerService extends Service implements
         }
     }
 
+    private void initializeMediaPlayer() {
+        mediaPlayer = new MediaPlayer();
+        mediaPlayer.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
+            @Override
+            public void onCompletion(MediaPlayer arg0) {
+                Log.d("PlayerService", "onCompletion: " + arg0);
+                if (currentTrackPosition == trackList.size()-1) {
+                    if(MyApp.getPref().getInt(Constants.PREFERENCES.REPEAT,0)==Constants.PREFERENCE_VALUES.REPEAT_ALL){
+                        playTrack(0);
+                        currentTrackPosition=0;
+                    } else if(MyApp.getPref().getInt(Constants.PREFERENCES.REPEAT,0)==Constants.PREFERENCE_VALUES.REPEAT_ONE) {
+                        playTrack(currentTrackPosition);
+                    } else {
+                        if(MyApp.getPref().getBoolean(getString(R.string.pref_continuous_playback), false)) {
+                            if (trackList.size() < 10) {
+                                List<Integer> dataItems = MusicLibrary.getInstance().getDefaultTracklistNew();
+                                Collections.shuffle(dataItems);
+                                trackList.addAll(dataItems);
+                                playTrack(currentTrackPosition + 1);
+                            } else {
+                                playTrack(0);
+                                currentTrackPosition = 0;
+                            }
+                        }else {
+                            stop();
+                        }
+                    }
+                }else if(MyApp.getPref().getInt(Constants.PREFERENCES.REPEAT,0)==Constants.PREFERENCE_VALUES.REPEAT_ONE) {
+                    playTrack(currentTrackPosition);
+                }else {
+                    nextTrack();
+                }
+                notifyUI();
+                PostNotification();
+            }
+        });
+
+        mediaPlayer.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
+            @Override
+            public void onPrepared(MediaPlayer mp) {
+                if(playAfterPrepare) {
+                    startPlaying();
+                }else {
+                    Log.d("PlayerService", "onPrepared: seeking to : " + MyApp.getPref().getInt(Constants.PREFERENCES.STORED_SONG_POSITION_DURATION, 0));
+                    try {
+                        mediaPlayer.seekTo(MyApp.getPref().getInt(Constants.PREFERENCES.STORED_SONG_POSITION_DURATION, 0));
+                    }catch (Exception e){
+                        Log.d("PlayerService", "onPrepared: Unable to seek track");
+                    }
+                }
+            }
+        });
+
+        if(BuildConfig.DEBUG) {
+            //Logs while debugging
+            mediaPlayer.setOnErrorListener(new MediaPlayer.OnErrorListener() {
+                @Override
+                public boolean onError(MediaPlayer mediaPlayer, int i, int i1) {
+                    Log.d("PlayerService", "onError: " + mediaPlayer + " " + i + " " + i1);
+                    return false;
+                }
+            });
+
+            mediaPlayer.setOnInfoListener(new MediaPlayer.OnInfoListener() {
+                @Override
+                public boolean onInfo(MediaPlayer mediaPlayer, int i, int i1) {
+                    Log.d("PlayerService", "onInfo: " + mediaPlayer);
+                    return false;
+                }
+            });
+        }
+    }
+bran
+    private void initializeMediaPlayer2() {
+        mediaPlayer2 = new MediaPlayer();
+        mediaPlayer2.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
+            @Override
+            public void onCompletion(MediaPlayer arg0) {
+                Log.d("PlayerService", "onCompletion: " + arg0);
+                if (currentTrackPosition == trackList.size()-1) {
+                    if(MyApp.getPref().getInt(Constants.PREFERENCES.REPEAT,0)==Constants.PREFERENCE_VALUES.REPEAT_ALL){
+                        playTrack(0);
+                        currentTrackPosition=0;
+                    } else if(MyApp.getPref().getInt(Constants.PREFERENCES.REPEAT,0)==Constants.PREFERENCE_VALUES.REPEAT_ONE) {
+                        playTrack(currentTrackPosition);
+                    } else {
+                        if(MyApp.getPref().getBoolean(getString(R.string.pref_continuous_playback), false)) {
+                            if (trackList.size() < 10) {
+                                List<Integer> dataItems = MusicLibrary.getInstance().getDefaultTracklistNew();
+                                Collections.shuffle(dataItems);
+                                trackList.addAll(dataItems);
+                                playTrack(currentTrackPosition + 1);
+                            } else {
+                                playTrack(0);
+                                currentTrackPosition = 0;
+                            }
+                        }else {
+                            stop();
+                        }
+                    }
+                }else if(MyApp.getPref().getInt(Constants.PREFERENCES.REPEAT,0)==Constants.PREFERENCE_VALUES.REPEAT_ONE) {
+                    playTrack(currentTrackPosition);
+                }else {
+                    nextTrack();
+                }
+                notifyUI();
+                PostNotification();
+            }
+        });
+
+        mediaPlayer2.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
+            @Override
+            public void onPrepared(MediaPlayer mp) {
+                if(playAfterPrepare) {
+                    startPlaying();
+                }else {
+                    Log.d("PlayerService", "onPrepared: seeking to : " + MyApp.getPref().getInt(Constants.PREFERENCES.STORED_SONG_POSITION_DURATION, 0));
+                    try {
+                        mediaPlayer2.seekTo(MyApp.getPref().getInt(Constants.PREFERENCES.STORED_SONG_POSITION_DURATION, 0));
+                    }catch (Exception e){
+                        Log.d("PlayerService", "onPrepared: Unable to seek track");
+                    }
+                }
+            }
+        });
+
+        if(BuildConfig.DEBUG) {
+            //Logs while debugging
+            mediaPlayer2.setOnErrorListener(new MediaPlayer.OnErrorListener() {
+                @Override
+                public boolean onError(MediaPlayer mediaPlayer, int i, int i1) {
+                    Log.d("PlayerService", "onError: " + mediaPlayer + " " + i + " " + i1);
+                    return false;
+                }
+            });
+
+            mediaPlayer2.setOnInfoListener(new MediaPlayer.OnInfoListener() {
+                @Override
+                public boolean onInfo(MediaPlayer mediaPlayer, int i, int i1) {
+                    Log.d("PlayerService", "onInfo: " + mediaPlayer);
+                    return false;
+                }
+            });
+        }
+    }
+
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if(MyApp.getService()==null){
@@ -360,7 +448,8 @@ public class PlayerService extends Service implements
 
                     case Constants.ACTION.DISMISS_EVENT:
                         if(getStatus()==PLAYING){
-                            mediaPlayer.pause();
+                            pause();
+                            /*mediaPlayer.pause();
                             setStatus(PAUSED);
                             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
                                 PlaybackStateCompat state = new PlaybackStateCompat.Builder()
@@ -371,7 +460,7 @@ public class PlayerService extends Service implements
                                         .setState(PlaybackStateCompat.STATE_PAUSED, 0, 1)
                                         .build();
                                 mMediaSession.setPlaybackState(state);
-                            }
+                            }*/
                         }
                         // even if music is stopped because of focus loss, don't allow to resume playback after clicking close button
                         musicPuasedBecauseOfFocusLoss  = false;
@@ -629,8 +718,8 @@ public class PlayerService extends Service implements
     public void initAudioFX() {
 
         try {
-            //Instatiate the equalizer helper object.
-            mEqualizerHelper = new EqualizerHelper(getApplicationContext(), mediaPlayer.getAudioSessionId(),
+            //Instantiate the equalizer helper object.
+            mEqualizerHelper = new EqualizerHelper(getApplicationContext(), getAudioSessionId(),
                     MyApp.getPref().getBoolean("pref_equ_enabled", true));
 
         } catch (UnsupportedOperationException e) {
@@ -639,6 +728,10 @@ public class PlayerService extends Service implements
             e.printStackTrace();
         }
 
+    }
+
+    private int getAudioSessionId() {
+        return getCurrentMediaPlayer().getAudioSessionId();
     }
 
     private void applyMediaPlayerEQ() {
@@ -1230,10 +1323,8 @@ public class PlayerService extends Service implements
         FileInputStream file;
         try {
             file = new FileInputStream(new File(currentTrack.getFilePath()));
-            mediaPlayer.setDataSource(file.getFD());
-            mediaPlayer.prepareAsync();
+            prepareMediaPlayer(file);
             playAfterPrepare=true;
-            //mediaPlayer.prepare();
         } catch (FileNotFoundException e) {
             e.printStackTrace();
         } catch (IllegalArgumentException e) {
@@ -1254,6 +1345,11 @@ public class PlayerService extends Service implements
 
         //sometimes player may shut down abruptly, make sure you save the current queue every time song changes
         storeTracklist();
+    }
+
+    private void prepareMediaPlayer(FileInputStream file) throws IOException {
+        getCurrentMediaPlayer().setDataSource(file.getFD());
+        getCurrentMediaPlayer().prepareAsync();
     }
 
     private void setSessionState(){
@@ -1295,14 +1391,16 @@ public class PlayerService extends Service implements
                 if (!trackList.isEmpty()) {
                     playTrack(currentTrackPosition);
                     notifyUI();
+                    PostNotification();
                 }
                 break;
 
             case PLAYING:
                 try {
-                    mediaPlayer.pause();
+                    /*mediaPlayer.pause();
                     setStatus(PAUSED);
-                    setSessionState();
+                    setSessionState();*/
+                    pause();
                 }catch (IllegalStateException ignored){
                 }
                 break;
@@ -1310,19 +1408,23 @@ public class PlayerService extends Service implements
             case PAUSED:
                 gradualIncreaseVolume();
                 try {
-                    mediaPlayer.start();
+                    startPlaying();
                     setStatus(PLAYING);
                     setSessionState();
+                    PostNotification();
                 }catch (IllegalStateException ignored){
                 }
                 break;
         }
-        PostNotification();
+    }
+
+    private void startPlaying() {
+        getCurrentMediaPlayer().start();
     }
 
     public void pause() {
         try {
-            mediaPlayer.pause();
+            getCurrentMediaPlayer().pause();
         }catch (IllegalStateException ignored){
 
         }
@@ -1333,11 +1435,11 @@ public class PlayerService extends Service implements
 
     public void stop() {
         try {
-            if (mediaPlayer.isPlaying()) {
-                mediaPlayer.pause();
+            if (getCurrentMediaPlayer().isPlaying()) {
+                getCurrentMediaPlayer().pause();
             }
-            mediaPlayer.stop();
-            mediaPlayer.reset();
+            getCurrentMediaPlayer().stop();
+            getCurrentMediaPlayer().reset();
             setStatus(STOPPED);
         }catch (IllegalStateException e){
             setStatus(STOPPED);
@@ -1407,7 +1509,7 @@ public class PlayerService extends Service implements
         if(((float)getCurrentTrackProgress()/(float)getCurrentTrackDuration())
                 > Constants.PREFERENCE_VALUES.PREV_ACT_TIME_CONSTANT){
             //start same song from start
-            mediaPlayer.seekTo(0);
+            getCurrentMediaPlayer().seekTo(0);
         }else if (currentTrackPosition > 0) {
             playTrack(currentTrackPosition-1);
         }else if(currentTrackPosition == 0){
@@ -1439,7 +1541,7 @@ public class PlayerService extends Service implements
     public int getCurrentTrackProgress() {
         if (status > STOPPED) {
             try {
-                return mediaPlayer.getCurrentPosition();
+                return getCurrentMediaPlayer().getCurrentPosition();
             }catch (IllegalStateException e){
                 return 0;
             }
@@ -1463,7 +1565,7 @@ public class PlayerService extends Service implements
     public void seekTrack(int p) {
         if (status > STOPPED) {
             try {
-                mediaPlayer.seekTo(p);
+                getCurrentMediaPlayer().seekTo(p);
             }catch (IllegalStateException ignored){
 
             }
@@ -1538,9 +1640,7 @@ public class PlayerService extends Service implements
             mEqualizerHelper = null;
         }
 
-        mediaPlayer.stop();
-        mediaPlayer.reset();
-        mediaPlayer.release();
+        releaseMediaPlayers();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             setStatus(STOPPED);
             setSessionState();
@@ -1560,6 +1660,16 @@ public class PlayerService extends Service implements
 
         MyApp.setService(null);
         super.onDestroy();
+    }
+
+    private void releaseMediaPlayers() {
+        mediaPlayer.stop();
+        mediaPlayer.reset();
+        mediaPlayer.release();
+
+        mediaPlayer2.stop();
+        mediaPlayer2.reset();
+        mediaPlayer2.release();
     }
 
     public void storeTracklist() {
@@ -1628,8 +1738,7 @@ public class PlayerService extends Service implements
         FileInputStream file;
         try {
             file = new FileInputStream(new File(currentTrack.getFilePath()));
-            mediaPlayer.setDataSource(file.getFD());
-            mediaPlayer.prepareAsync();
+            prepareMediaPlayer(file);
             playAfterPrepare=false;
             setStatus(PAUSED);
         } catch (FileNotFoundException e) {
@@ -1716,6 +1825,17 @@ public class PlayerService extends Service implements
 
         mAudioManager.setStreamVolume(AudioManager.STREAM_MUSIC,0,0);
         mHandler.post(gradualVolumeRaiseRunnable);
+    }
+
+    /**
+     * return currently active media player
+     */
+    private MediaPlayer getCurrentMediaPlayer(){
+        if(crossFadeEnabled && !mediaPlayer1Selected){
+            return mediaPlayer2;
+        }else {
+            return mediaPlayer;
+        }
     }
 
     private final Runnable gradualVolumeRaiseRunnable = new Runnable() {
